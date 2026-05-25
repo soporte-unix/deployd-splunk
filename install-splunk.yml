@@ -1,1 +1,128 @@
-5ryrty4yt4
+---
+- name: Despliegue y Configuracion de Splunk Universal Forwarder
+  hosts: all
+  become: true
+  vars:
+    splunk_version: "10.0.3-adbac1c8811c"
+    tgz_file: "splunkforwarder-{{ splunk_version }}-linux-amd64.tgz"
+    splunk_home: "/opt/splunkforwarder"
+    app_path: "{{ splunk_home }}/etc/apps/ccr_all_forwarder_outputs"
+
+  tasks:
+    - name: 1. Crear el usuario del sistema 'splunk'
+      ansible.builtin.user:
+        name: splunk
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: 2. Copiar el archivo comprimido a una ruta temporal segura (/tmp)
+      ansible.builtin.copy:
+        src: "files/{{ tgz_file }}"
+        dest: "/tmp/{{ tgz_file }}"
+        mode: '0644'
+
+    - name: 3. Descomprimir el instalador directamente en /opt
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ tgz_file }}"
+        dest: /opt
+        remote_src: true
+        creates: "{{ splunk_home }}"
+        owner: splunk
+        group: splunk
+
+    - name: 4. Crear la estructura de directorios para la App de Splunk
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: splunk
+        group: splunk
+      loop:
+        - "{{ app_path }}/local"
+        - "{{ app_path }}/metadata"
+
+    - name: 5. Crear archivo app.conf
+      ansible.builtin.copy:
+        dest: "{{ app_path }}/local/app.conf"
+        mode: '0640'
+        owner: splunk
+        group: splunk
+        content: |
+          [install]
+          state = enabled
+
+          [package]
+          check_for_updates = false
+
+          [ui]
+          is_visible = false
+          is_manageable = false
+
+    - name: 6. Crear archivo outputs.conf
+      ansible.builtin.copy:
+        dest: "{{ app_path }}/local/outputs.conf"
+        mode: '0640'
+        owner: splunk
+        group: splunk
+        content: |
+          [tcpout]
+          defaultGroup = primary_indexers
+          forceTimebasedAutoLB = true
+          forwardedindex.2.whitelist = (_audit|_introspection|_internal)
+
+          [tcpout:primary_indexers]
+          server = 10.124.3.131:9997, 10.124.3.142:9997, 10.124.3.132:9997
+
+    - name: 7. Crear archivo local.meta
+      ansible.builtin.copy:
+        dest: "{{ app_path }}/metadata/local.meta"
+        mode: '0640'
+        owner: splunk
+        group: splunk
+        content: |
+          []
+          access = read : [ * ], write : [ admin ]
+          export = system
+
+    - name: 8. Pre-configurar credenciales iniciales (user-seed.conf)
+      ansible.builtin.copy:
+        dest: "{{ splunk_home }}/etc/system/local/user-seed.conf"
+        mode: '0600'
+        owner: splunk
+        group: splunk
+        content: |
+          [user_info]
+          USERNAME = admin
+          PASSWORD = credicard
+
+    - name: 9. Asegurar propiedad completa de la ruta /opt/splunkforwarder a splunk
+      ansible.builtin.file:
+        path: "{{ splunk_home }}"
+        state: directory
+        recurse: true
+        owner: splunk
+        group: splunk
+
+    - name: 10. Iniciar el servicio Splunk aceptando la licencia y aplicando credenciales
+      ansible.builtin.command:
+        cmd: "{{ splunk_home }}/bin/splunk start --accept-license --no-prompt"
+      become_user: splunk
+      register: splunk_start_result
+      changed_when: "'Splunk Universal Forwarder started' in splunk_start_result.stdout"
+
+    - name: 11. Verificar el estado del servicio Splunk
+      ansible.builtin.command:
+        cmd: "{{ splunk_home }}/bin/splunk status"
+      become_user: splunk
+      register: splunk_status
+      changed_when: false
+
+    - name: 12. Mostrar el estado de Splunk en la consola
+      ansible.builtin.debug:
+        msg: "{{ splunk_status.stdout }}"
+
+    - name: 13. Limpieza del instalador temporal en el host remoto
+      ansible.builtin.file:
+        path: "/tmp/{{ tgz_file }}"
+        state: absent
