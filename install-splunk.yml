@@ -18,7 +18,7 @@
 
     - name: 2. Copiar el archivo comprimido a una ruta temporal segura (/tmp)
       ansible.builtin.copy:
-        src: "localhosts:/opt/ansible/playbooks/splunk_deploy/files/{{ tgz_file }}"
+        src: "10.134.14.80:/opt/ansible/playbooks/splunk_deploy/files{{ tgz_file }}"
         dest: "/tmp/{{ tgz_file }}"
         mode: '0644'
 
